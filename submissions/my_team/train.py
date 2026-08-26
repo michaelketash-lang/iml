@@ -1,10 +1,9 @@
 from pathlib import Path
-
+from torch.utils.data import DataLoader, Subset, ConcatDataset
 import joblib
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 
 from base_model import ImageNetSubset
@@ -18,7 +17,8 @@ OUTPUT = Path("weights.joblib")
 
 IMAGE_SIZE = 224
 BATCH_SIZE = 64
-EPOCHS = 15
+EPOCHS = 30
+
 SEED = 42
 LR = 0.001
 TRAINING_FACTOR = 0.8
@@ -26,22 +26,51 @@ TRAINING_FACTOR = 0.8
 IMAGENET_MEAN = (0.485,0.456,0.406)
 IMAGENET_STD = (0.229,0.224,0.225)
 
-def get_data_loaders():
-    transform = transforms.Compose([
-        transforms.Resize((IMAGE_SIZE,IMAGE_SIZE)),transforms.ToTensor(),transforms.Normalize(mean = IMAGENET_MEAN,std= IMAGENET_STD),
 
+# The Math (Transforms)
+def get_train_transforms():
+    """Returns the aggressive data augmentations for the training ."""
+    return transforms.Compose([
+        transforms.RandomResizedCrop(IMAGE_SIZE, scale=(0.6, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
-    full_dataset = ImageNetSubset(root = DATA_ROOT,split="train",transform= transform)
 
-    total_samples = len(full_dataset)
-    train_size = int(total_samples * TRAINING_FACTOR)
-    val_size = total_samples - train_size
 
-    generator = torch.Generator().manual_seed(SEED)
-    train_subset,val_subset = random_split(full_dataset,[train_size,val_size],generator=generator)
-    train_loader = DataLoader(train_subset,batch_size=BATCH_SIZE,shuffle=True)
-    val_loader = DataLoader(val_subset,batch_size=BATCH_SIZE,shuffle=False)
-    return train_loader,val_loader
+def get_val_transforms():
+    """Returns standard transformations for fair, clean validation grading."""
+    return transforms.Compose([
+        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+    ])
+
+
+def get_data_loaders():
+    """Builds the train, validation, and combined augmentation pipelines."""
+    train_dataset = ImageNetSubset(root=DATA_ROOT, split="train",
+                                   transform=get_train_transforms())
+    val_dataset = ImageNetSubset(root=DATA_ROOT, split="validation",
+                                 transform=get_val_transforms())
+
+    aug_bw = ImageNetSubset(root=DATA_ROOT, split="augmentations/black_white",
+                            transform=get_val_transforms())
+    aug_cj = ImageNetSubset(root=DATA_ROOT, split="augmentations/color_jitter",
+                            transform=get_val_transforms())
+    aug_sp = ImageNetSubset(root=DATA_ROOT, split="augmentations/salt_pepper",
+                            transform=get_val_transforms())
+
+    combined_aug_dataset = ConcatDataset([aug_bw, aug_cj, aug_sp])
+
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
+                              shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    aug_loader = DataLoader(combined_aug_dataset, batch_size=BATCH_SIZE,
+                            shuffle=False)
+
+    return train_loader, val_loader, aug_loader
 
 
 def get_device():
@@ -107,23 +136,42 @@ def main():
 
     This script must create weights.joblib.
     """
-    device = get_device()
-    print(f"Training in device: {device}")
 
-    print("LOADS THE DATA...")
-    train_loader,val_loader=get_data_loaders()
+    def main():
+        """
+        Full training pipeline.
+        This script must create weights.joblib.
+        """
+        device = get_device()
+        print(f"Training on device: {device}")
 
-    print("initialize the best model in the world")
-    model = ModelArchitecture().to(device)
-    criteria = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(),lr=LR)
+        print("LOADING DATA...")
+        train_loader, val_loader, aug_loader = get_data_loaders()
 
-    print("Strat train loop.......")
-    for epoch in range(1,EPOCHS+ 1):
-        train_one_epoch(model,train_loader,criteria,optimizer,device,epoch)
-        val_accur = evaluate_model(model,val_loader,device)
-        print(f"-> Epoch {epoch} Validation Accuracy: {val_accur:.2f}%\n")
-    save_weights(model,OUTPUT)
+        print("Initializing model...")
+        model = ModelArchitecture().to(device)
+        criteria = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(model.parameters(), lr=LR)
+
+        print("Starting training loop...")
+        for epoch in range(1, EPOCHS + 1):
+            # train
+            train_one_epoch(model, train_loader, criteria, optimizer, device,
+                            epoch)
+
+            # check on existing data
+            val_accur = evaluate_model(model, val_loader, device)
+
+            # check on augmentation
+            aug_accur = evaluate_model(model, aug_loader, device)
+
+            print(
+                f"-> Epoch {epoch} | Val Acc: {val_accur:.2f}% | Aug Acc: {aug_accur:.2f}%\n")
+
+        save_weights(model, OUTPUT)
+
+    if __name__ == "__main__":
+        main()
     # TODO: load dataset (you might want to use ImageNetSubset)
     # TODO: create your model
 

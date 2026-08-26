@@ -17,4 +17,27 @@ Our final model architecture is the result of an iterative engineering process a
 * Result: [Leave blank until you record your clean accuracy]
 
 ### Robustness Strategy & Data Manipulations
-[This section will document Phase 3: the exact torchvision transforms we apply, how we injected them into the training loop, and how they prevented shortcut learning.]
+# Challenge 2: Robust Bird Classification
+
+## 1. Model Architecture
+Our architecture is a custom-built Convolutional Neural Network (CNN) designed from scratch to balance learning capacity with regularization.
+
+* **Feature Extractor:** Consists of multiple Convolutional blocks. Each block utilizes `Conv2d` layers followed by `BatchNorm2d` to stabilize the learning process and `ReLU` activation. We use `MaxPool2d` to downsample spatial dimensions.
+* **Global Pooling:** An `AdaptiveAvgPool2d` layer is used before the classifier to allow the network to handle flexible spatial dimensions and aggressively reduce parameter count, preventing overfitting.
+* **Classifier:** A fully connected layer mapping the extracted features to the 20 bird classes, utilizing `Dropout` to force the network to distribute its learned representations rather than relying on single nodes.
+
+## 2. Robustness & Manipulation Strategy (Data Augmentation)
+To ensure the model learns intrinsic physical features of the birds rather than relying on background context or color shortcuts (e.g., assuming blue pixels always indicate a water bird), we implemented an aggressive, dual-pipeline data augmentation strategy during training.
+
+The `train_loader` applies the following dynamic transformations:
+1. **Context/Scale Shifts (`RandomResizedCrop`):** Randomly zooms and crops the image (scale 0.6 to 1.0). This prevents the model from relying on the subject being perfectly centered and forces it to learn partial anatomical features (wings, beaks, etc.).
+2. **Orientation Invariance (`RandomHorizontalFlip`):** Applied with a 50% probability to teach the model structural symmetry, ensuring directional facing does not impact classification.
+3. **Color & Lighting Invariance (`ColorJitter`):** Randomly alters brightness, contrast, saturation, and hue. This violently disrupts the consistency of background colors, mathematically forcing the optimizer to abandon color-based shortcuts and focus on structural shapes.
+
+*Note: The `val_loader` uses a strict "clean room" pipeline (Resize and Normalize only) to ensure a fair and accurate evaluation metric.*
+
+## 3. Training Details
+* **Hardware:** Trained locally on Apple Silicon (MPS).
+* **Split:** 80/20 Train/Validation split using a fixed manual seed for reproducibility.
+* **Epochs:** 15
+* **Loss & Optimizer:** CrossEntropyLoss and Adam Optimizer.
