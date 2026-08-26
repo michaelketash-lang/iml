@@ -1,0 +1,20 @@
+Michael,[Partner_Name]
+[Michael_ID],[Partner_ID]
+
+### Model Design & Architectural Evolution
+Our final model architecture is the result of an iterative engineering process aimed at balancing baseline capacity with robustness.
+
+1. Iteration 1 (Baseline Pipeline Check)
+* Architecture: 2-Block Convolutional Neural Network (CNN).
+* Details: 3x3 kernels, Max Pooling, and a single Linear classification head.
+* Goal: Establish a working data pipeline, verify the 80/20 train/validation split, and ensure the hardware-agnostic saving mechanism operated correctly.
+* Result: Pipeline successfully executed and passed the local evaluation wrapper.
+
+2. Iteration 2 (Scaling Capacity)
+* Architecture: 4-Block CNN with Batch Normalization and Global Average Pooling.
+* Details: Replaced the brittle hardcoded flattened tensor with AdaptiveAvgPool2d to ensure dimensional stability. Introduced nn.BatchNorm2d after every convolution to stabilize training gradients and nn.Dropout(p=0.5) to act as our initial regularizer.
+* Goal: Increase the network's expressive power to achieve high accuracy on clean, in-distribution images.
+* Result: [Leave blank until you record your clean accuracy]
+
+### Robustness Strategy & Data Manipulations
+[This section will document Phase 3: the exact torchvision transforms we apply, how we injected them into the training loop, and how they prevented shortcut learning.]
