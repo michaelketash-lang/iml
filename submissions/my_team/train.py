@@ -10,7 +10,6 @@ from base_model import ImageNetSubset
 from model import ModelArchitecture
 
 
-# Anchors the path exactly 3 folders up from train.py (my_team -> submissions -> project -> dataset)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_ROOT = PROJECT_ROOT / "dataset"
 OUTPUT = Path("weights.joblib")
@@ -124,7 +123,7 @@ def evaluate_model(model, val_loader, device) -> float:
 
 def save_weights(model, output_path: Path):
     """Safely moves the model to CPU and saves the state_dict."""
-    print("Saving model weights...")
+    print("Saving model weights:")
     model = model.cpu()
     joblib.dump(model.state_dict(), output_path)
     print(f"Saved trained weights to {output_path}")
@@ -148,7 +147,7 @@ def main():
         print("LOADING DATA...")
         train_loader, val_loader, aug_loader = get_data_loaders()
 
-        print("Initializing model...")
+        print("Initializing model:")
         model = ModelArchitecture().to(device)
         criteria = nn.CrossEntropyLoss()
         optimizer = optim.Adam(model.parameters(), lr=LR)
@@ -176,7 +175,6 @@ def main():
     # TODO: create your model
 
     # TODO: save trained model weights to weights.joblib
-
 
 
 if __name__ == "__main__":
