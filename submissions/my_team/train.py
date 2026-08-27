@@ -17,7 +17,7 @@ OUTPUT = Path("weights.joblib")
 
 IMAGE_SIZE = 224
 BATCH_SIZE = 64
-EPOCHS = 30
+EPOCHS = 20
 
 SEED = 42
 LR = 0.001

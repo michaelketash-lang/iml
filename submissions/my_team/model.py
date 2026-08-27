@@ -44,45 +44,43 @@ class ModelArchitecture(nn.Module):
 
 
 
-####### Iteration 2:4-block CNN featuring Batch Normalization, Dropout, and Global Average Pooling ########
-
+####### Iteration 4: Double Convolution ########
 class ModelArchitecture(nn.Module):
     def __init__(self, num_classes: int = 20):
         super().__init__()
 
-        # Helper function to keep our code clean and DRY (Don't Repeat Yourself)
+        # Double Convolution
         def conv_block(in_channels, out_channels):
             return nn.Sequential(
+                # extract basics
                 nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1,
                           padding=1),
                 nn.BatchNorm2d(out_channels),
-                # Normalizes the batch to train faster and stabler
                 nn.ReLU(inplace=True),
+
+                # lets do another conv to be more expressive- increasing receptive field
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1,
+                          padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+
+                # max pooling
                 nn.MaxPool2d(kernel_size=2, stride=2)
             )
 
-        # Feature Extractor: 4 Blocks to capture deeper, complex patterns
-        # Input shape: [batch, 3, 224, 224]
+        # extract features still have 4 blocks but each block is double
         self.features = nn.Sequential(
-            conv_block(3, 32),  # Output: [batch, 32, 112, 112]
-            conv_block(32, 64),  # Output: [batch, 64, 56, 56]
-            conv_block(64, 128),  # Output: [batch, 128, 28, 28]
-            conv_block(128, 256)  # Output: [batch, 256, 14, 14]
+            conv_block(3, 32),
+            conv_block(32, 64),
+            conv_block(64, 128),
+            conv_block(128, 256)
         )
 
-        # Classifier
+        # Classifier 20 classes
         self.classifier = nn.Sequential(
-            # AdaptiveAvgPool2d automatically averages the spatial dimensions down to 1x1.
-            # This completely removes the need for hardcoded math like '100352'.
-            # Output becomes: [batch, 256, 1, 1]
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-
-            # Dropout randomly zeroes out 50% of the neurons during training.
-            # This is a regularization technique to prevent overfitting.
             nn.Dropout(p=0.5),
-
-            # Now we only map 256 features to 20 classes. Much cleaner!
             nn.Linear(256, num_classes)
         )
 
