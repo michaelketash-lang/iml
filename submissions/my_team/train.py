@@ -17,7 +17,7 @@ OUTPUT = Path("weights.joblib")
 
 IMAGE_SIZE = 224
 BATCH_SIZE = 64
-EPOCHS = 20
+EPOCHS = 30
 
 SEED = 42
 LR = 0.001
@@ -133,51 +133,38 @@ def save_weights(model, output_path: Path):
 def main():
     """
     Full training pipeline.
-
     This script must create weights.joblib.
     """
+    device = get_device()
+    print(f"Training on device: {device}")
 
-    def main():
-        """
-        Full training pipeline.
-        This script must create weights.joblib.
-        """
-        device = get_device()
-        print(f"Training on device: {device}")
+    print("LOADING DATA...")
+    train_loader, val_loader, aug_loader = get_data_loaders()
 
-        print("LOADING DATA...")
-        train_loader, val_loader, aug_loader = get_data_loaders()
+    print("Initializing model...")
+    model = ModelArchitecture().to(device)
+    criteria = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=LR)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10,
+                                                gamma=0.5)
 
-        print("Initializing model...")
-        model = ModelArchitecture().to(device)
-        criteria = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=LR)
+    print("Starting training loop...")
+    for epoch in range(1, EPOCHS + 1):
+        # train
+        train_one_epoch(model, train_loader, criteria, optimizer, device,
+                        epoch)
 
-        print("Starting training loop...")
-        for epoch in range(1, EPOCHS + 1):
-            # train
-            train_one_epoch(model, train_loader, criteria, optimizer, device,
-                            epoch)
+        # check on existing data
+        val_accur = evaluate_model(model, val_loader, device)
 
-            # check on existing data
-            val_accur = evaluate_model(model, val_loader, device)
+        # check on augmentation
+        aug_accur = evaluate_model(model, aug_loader, device)
 
-            # check on augmentation
-            aug_accur = evaluate_model(model, aug_loader, device)
+        print(
+            f"-> Epoch {epoch} | Val Acc: {val_accur:.2f}% | Aug Acc: {aug_accur:.2f}%\n")
+        scheduler.step()
 
-            print(
-                f"-> Epoch {epoch} | Val Acc: {val_accur:.2f}% | Aug Acc: {aug_accur:.2f}%\n")
-
-        save_weights(model, OUTPUT)
-
-    if __name__ == "__main__":
-        main()
-    # TODO: load dataset (you might want to use ImageNetSubset)
-    # TODO: create your model
-
-    # TODO: save trained model weights to weights.joblib
-
-
+    save_weights(model, OUTPUT)
 
 if __name__ == "__main__":
     main()
