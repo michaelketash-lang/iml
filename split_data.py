@@ -53,7 +53,7 @@ def main():
             shutil.move(str(img_path), str(val_class_dir / img_path.name))
 
         total_moved += num_val
-        print(f"Moved {num_val} images for class {class_name}")
+        print(f"moved {num_val} images for class {class_name}")
 
     if total_moved > 0:
         print(

@@ -9,8 +9,8 @@ from torchvision import transforms
 from base_model import ImageNetSubset
 from model import ModelArchitecture
 
-
-# Anchors the path exactly 3 folders up from train.py (my_team -> submissions -> project -> dataset)
+##################################################################
+# Constants:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_ROOT = PROJECT_ROOT / "dataset"
 OUTPUT = Path("weights.joblib")
@@ -25,11 +25,12 @@ TRAINING_FACTOR = 0.8
 
 IMAGENET_MEAN = (0.485,0.456,0.406)
 IMAGENET_STD = (0.229,0.224,0.225)
+#################################################################
 
 
-# The Math (Transforms)
 def get_train_transforms():
-    """Returns the aggressive data augmentations for the training ."""
+    """creating dynamic data augmentation pipeline that applies random visual changes
+    for example cropping ,flipping and color shifts for each image during training ."""
     return transforms.Compose([
         transforms.RandomResizedCrop(IMAGE_SIZE, scale=(0.6, 1.0)),
         transforms.RandomHorizontalFlip(p=0.5),
@@ -40,7 +41,8 @@ def get_train_transforms():
 
 
 def get_val_transforms():
-    """Returns standard transformations for fair, clean validation grading."""
+    """create a pipeline that simply resize and normalize the images without
+     applying random augmentatinos."""
     return transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
         transforms.ToTensor(),
@@ -50,20 +52,21 @@ def get_val_transforms():
 
 def get_data_loaders():
     """Builds the train, validation, and combined augmentation pipelines."""
+    # loading training and validation sets with the specific transforms
     train_dataset = ImageNetSubset(root=DATA_ROOT, split="train",
                                    transform=get_train_transforms())
     val_dataset = ImageNetSubset(root=DATA_ROOT, split="validation",
                                  transform=get_val_transforms())
-
+    # load stress test images with clean validation transforms
     aug_bw = ImageNetSubset(root=DATA_ROOT, split="augmentations/black_white",
                             transform=get_val_transforms())
     aug_cj = ImageNetSubset(root=DATA_ROOT, split="augmentations/color_jitter",
                             transform=get_val_transforms())
     aug_sp = ImageNetSubset(root=DATA_ROOT, split="augmentations/salt_pepper",
                             transform=get_val_transforms())
-
+    # merge all of three into one big dataset for evaluation
     combined_aug_dataset = ConcatDataset([aug_bw, aug_cj, aug_sp])
-
+    # wrapping datasets in dataloaders to handle batching ,shuffling only train data.
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
                               shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
@@ -106,14 +109,14 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
 
 
 def evaluate_model(model, val_loader, device) -> float:
-    """Runs the model on the validation set and returns the accuracy percentage."""
+    """Runs the model on  validation set and returns the acc percentage.
+       Comparing the model's predictions to true labels"""
     model.eval()
-    correct = 0
-    total = 0
-
+    correct, total = 0, 0
     with torch.no_grad():
         for inputs, labels in val_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs = inputs.to(device)
+            labels = labels.to(device)
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
@@ -124,31 +127,27 @@ def evaluate_model(model, val_loader, device) -> float:
 
 def save_weights(model, output_path: Path):
     """Safely moves the model to CPU and saves the state_dict."""
-    print("Saving model weights...")
+    print("Saving model weights:")
     model = model.cpu()
     joblib.dump(model.state_dict(), output_path)
     print(f"Saved trained weights to {output_path}")
 
 
 def main():
-    """
-    Full training pipeline.
-    This script must create weights.joblib.
-    """
     device = get_device()
     print(f"Training on device: {device}")
 
-    print("LOADING DATA...")
+    print("LOADING DAta:")
     train_loader, val_loader, aug_loader = get_data_loaders()
 
-    print("Initializing model...")
+    print("Initialize model:")
     model = ModelArchitecture().to(device)
     criteria = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10,
                                                 gamma=0.5)
 
-    print("Starting training loop...")
+    print("Start training loop:")
     for epoch in range(1, EPOCHS + 1):
         # train
         train_one_epoch(model, train_loader, criteria, optimizer, device,
@@ -165,6 +164,7 @@ def main():
         scheduler.step()
 
     save_weights(model, OUTPUT)
+
 
 if __name__ == "__main__":
     main()
