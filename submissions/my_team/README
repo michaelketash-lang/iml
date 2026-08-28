@@ -1,43 +1,54 @@
-Michael,[Partner_Name]
-[Michael_ID],[Partner_ID]
+Michael Ketashvily
+STUDENT_ID
 
-### Model Design & Architectural Evolution
-Our final model architecture is the result of an iterative engineering process aimed at balancing baseline capacity with robustness.
+Model Design & Architectural Evolution:
+As required, I built and trained a custom CNN entirely from scratch, without
+using any external datasets and pre-trained weights and APIs.
+* Iteration 1 (Baseline): Started with a simple 2-block CNN (3x3 convolutions
+  and MaxPool) just to make sure the data pipeline and model saving mechanism
+  worked.
+* Iteration 2 (Scaling up): Increased to a 4-block CNN. I replaced the standard
+  Flatten layer with AdaptiveAvgPool2d so the dimensions wouldn't break, and
+  added BatchNorm2d and standard Dropout to help with gradient stability and
+  overfitting.
+* Iteration 3-4 (Dealing with Augmentations): Added heavy data augmentations.
+  This made the training loss very noisy with high variance, and the model
+  struggled to learn.
+* Iteration 5 (Final - Double Convolutions): I changed each block to a Double
+  Convolution structure (Conv->BN->ReLU->Conv->BN->ReLU->Pool). This gives the
+  network a larger receptive field before pooling, helping it learn actual
+  physical shapes instead of just memorizing background colors.
 
-1. Iteration 1 (Baseline Pipeline Check)
-* Architecture: 2-Block Convolutional Neural Network (CNN).
-* Details: 3x3 kernels, Max Pooling, and a single Linear classification head.
-* Goal: Establish a working data pipeline, verify the 80/20 train/validation split, and ensure the hardware-agnostic saving mechanism operated correctly.
-* Result: Pipeline successfully executed and passed the local evaluation wrapper.
+Manipulations Tried, Insertion Strategy & Impact on Performance:
+To stop the model from "shortcut learning" (like guessing it's a duck just
+because the background is blue), I added data augmentations directly into the
+PyTorch DataLoader during training. Here is how each one affected the model:
 
-2. Iteration 2 (Scaling Capacity)
-* Architecture: 4-Block CNN with Batch Normalization and Global Average Pooling.
-* Details: Replaced the brittle hardcoded flattened tensor with AdaptiveAvgPool2d to ensure dimensional stability. Introduced nn.BatchNorm2d after every convolution to stabilize training gradients and nn.Dropout(p=0.5) to act as our initial regularizer.
-* Goal: Increase the network's expressive power to achieve high accuracy on clean, in-distribution images.
-* Result: [Leave blank until you record your clean accuracy]
+1. RandomResizedCrop (Zooming and Cropping):
+   * Strategy: Randomly zooms and crops the image.
+   * Impact: At first, it lowered my validation accuracy because the bird
+     wasn't always perfectly centered. However, it forced the model to learn
+     specific body parts (like wings or beaks), which ended up improving the
+     accuracy on the stress-test images.
+2. RandomHorizontalFlip (Orientation):
+   * Strategy: Applied with a 50% probability.
+   * Impact: This barely hurt the training loss and effectively taught the
+     model that the direction the bird is facing doesn't change its class.
+3. ColorJitter (Brightness, Contrast, Hue):
+   * Strategy: Randomly changes the colors and lighting.
+   * Impact: This caused the biggest drop in accuracy at the beginning because
+     it messed up the background colors the model was relying on. But
+     eventually, it forced the optimizer to ignore color shortcuts and look at
+     the actual structure of the bird.
 
-### Robustness Strategy & Data Manipulations
-# Challenge 2: Robust Bird Classification
+Overall Performance Resolution:
+Combining all these augmentations made it hard for the model to converge, and
+it got stuck around 34% on the robust stress-test data. To fix this, I added
+Spatial Dropout inside the conv blocks. Instead of dropping
+random pixels, this drops entire feature maps, so the model can't rely on just
+one specific visual cue. I also added a StepLR scheduler to lower the learning rate over the 30 epochs and help the model
+settle into a local minimum cause i didnt want to miss the minimum if the learning rate is too big.
 
-## 1. Model Architecture
-Our architecture is a custom-built Convolutional Neural Network (CNN) designed from scratch to balance learning capacity with regularization.
-
-* **Feature Extractor:** Consists of multiple Convolutional blocks. Each block utilizes `Conv2d` layers followed by `BatchNorm2d` to stabilize the learning process and `ReLU` activation. We use `MaxPool2d` to downsample spatial dimensions.
-* **Global Pooling:** An `AdaptiveAvgPool2d` layer is used before the classifier to allow the network to handle flexible spatial dimensions and aggressively reduce parameter count, preventing overfitting.
-* **Classifier:** A fully connected layer mapping the extracted features to the 20 bird classes, utilizing `Dropout` to force the network to distribute its learned representations rather than relying on single nodes.
-
-## 2. Robustness & Manipulation Strategy (Data Augmentation)
-To ensure the model learns intrinsic physical features of the birds rather than relying on background context or color shortcuts (e.g., assuming blue pixels always indicate a water bird), we implemented an aggressive, dual-pipeline data augmentation strategy during training.
-
-The `train_loader` applies the following dynamic transformations:
-1. **Context/Scale Shifts (`RandomResizedCrop`):** Randomly zooms and crops the image (scale 0.6 to 1.0). This prevents the model from relying on the subject being perfectly centered and forces it to learn partial anatomical features (wings, beaks, etc.).
-2. **Orientation Invariance (`RandomHorizontalFlip`):** Applied with a 50% probability to teach the model structural symmetry, ensuring directional facing does not impact classification.
-3. **Color & Lighting Invariance (`ColorJitter`):** Randomly alters brightness, contrast, saturation, and hue. This violently disrupts the consistency of background colors, mathematically forcing the optimizer to abandon color-based shortcuts and focus on structural shapes.
-
-*Note: The `val_loader` uses a strict "clean room" pipeline (Resize and Normalize only) to ensure a fair and accurate evaluation metric.*
-
-## 3. Training Details
-* **Hardware:** Trained locally on Apple Silicon (MPS).
-* **Split:** 80/20 Train/Validation split using a fixed manual seed for reproducibility.
-* **Epochs:** 15
-* **Loss & Optimizer:** CrossEntropyLoss and Adam Optimizer.
+In the end, the model reached ~68.35% on the clean validation set and ~46.33%
+on the stress-test set, showing a good balance between learning the training
+data and handling visual noise.
