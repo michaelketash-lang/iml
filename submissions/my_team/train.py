@@ -1,4 +1,5 @@
 from pathlib import Path
+import random
 from torch.utils.data import DataLoader, Subset, ConcatDataset
 import joblib
 import torch
@@ -25,6 +26,17 @@ TRAINING_FACTOR = 0.8
 
 IMAGENET_MEAN = (0.485,0.456,0.406)
 IMAGENET_STD = (0.229,0.224,0.225)
+
+# Fraction of each augmentation folder mixed into training; the rest stays
+# held out for the aug_loader monitoring metric. black_white/salt_pepper get
+# a bigger share since get_train_transforms() has no analog for them, while
+# color_jitter already overlaps with the ColorJitter transform.
+AUG_TRAIN_FRACTIONS = {
+    "augmentations/black_white": 0.5,
+    "augmentations/salt_pepper": 0.5,
+    "augmentations/color_jitter": 0.2,
+}
+AUG_SPLIT_SEED = 42
 #################################################################
 
 
@@ -44,10 +56,29 @@ def get_val_transforms():
     """create a pipeline that simply resize and normalize the images without
      applying random augmentatinos."""
     return transforms.Compose([
-        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        transforms.Resize(256),
+        transforms.CenterCrop(IMAGE_SIZE),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
+
+
+def stratified_indices(dataset, take_frac, seed):
+    """Per-class shuffle+split (same idea as split_data.py), returns (take_idx, rest_idx)."""
+    rng = random.Random(seed)
+    by_class = {}
+    for i, (_, label) in enumerate(dataset.samples):
+        by_class.setdefault(label, []).append(i)
+
+    take_idx, rest_idx = [], []
+    for label, idxs in by_class.items():
+        idxs = idxs[:]
+        rng.shuffle(idxs)
+        n_take = int(len(idxs) * take_frac)
+        take_idx.extend(idxs[:n_take])
+        rest_idx.extend(idxs[n_take:])
+
+    return take_idx, rest_idx
 
 
 def get_data_loaders():
@@ -57,15 +88,27 @@ def get_data_loaders():
                                    transform=get_train_transforms())
     val_dataset = ImageNetSubset(root=DATA_ROOT, split="validation",
                                  transform=get_val_transforms())
-    # load stress test images with clean validation transforms
-    aug_bw = ImageNetSubset(root=DATA_ROOT, split="augmentations/black_white",
-                            transform=get_val_transforms())
-    aug_cj = ImageNetSubset(root=DATA_ROOT, split="augmentations/color_jitter",
-                            transform=get_val_transforms())
-    aug_sp = ImageNetSubset(root=DATA_ROOT, split="augmentations/salt_pepper",
-                            transform=get_val_transforms())
-    # merge all of three into one big dataset for evaluation
-    combined_aug_dataset = ConcatDataset([aug_bw, aug_cj, aug_sp])
+
+    # split each augmentation folder: part goes into training (with train-time
+    # transforms), the rest stays held out for the aug_loader monitoring metric
+    # (with clean eval transforms), so that metric isn't just measuring memorization.
+    train_aug_parts = []
+    held_aug_parts = []
+
+    for aug_split, train_frac in AUG_TRAIN_FRACTIONS.items():
+        aug_train_view = ImageNetSubset(root=DATA_ROOT, split=aug_split,
+                                        transform=get_train_transforms())
+        aug_val_view = ImageNetSubset(root=DATA_ROOT, split=aug_split,
+                                      transform=get_val_transforms())
+
+        take_idx, rest_idx = stratified_indices(aug_train_view, train_frac, AUG_SPLIT_SEED)
+
+        train_aug_parts.append(Subset(aug_train_view, take_idx))
+        held_aug_parts.append(Subset(aug_val_view, rest_idx))
+
+    train_dataset = ConcatDataset([train_dataset] + train_aug_parts)
+    combined_aug_dataset = ConcatDataset(held_aug_parts)
+
     # wrapping datasets in dataloaders to handle batching ,shuffling only train data.
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
                               shuffle=True)
