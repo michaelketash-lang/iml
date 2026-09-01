@@ -20,9 +20,7 @@ IMAGE_SIZE = 224
 BATCH_SIZE = 64
 EPOCHS = 30
 
-SEED = 42
 LR = 0.001
-TRAINING_FACTOR = 0.8
 
 IMAGENET_MEAN = (0.485,0.456,0.406)
 IMAGENET_STD = (0.229,0.224,0.225)
@@ -81,17 +79,19 @@ def stratified_indices(dataset, take_frac, seed):
     return take_idx, rest_idx
 
 
-def get_data_loaders():
-    """Builds the train, validation, and combined augmentation pipelines."""
-    # loading training and validation sets with the specific transforms
+def build_base_datasets():
+    """Loads the clean train and validation ImageNetSubset datasets with their transforms."""
     train_dataset = ImageNetSubset(root=DATA_ROOT, split="train",
                                    transform=get_train_transforms())
     val_dataset = ImageNetSubset(root=DATA_ROOT, split="validation",
                                  transform=get_val_transforms())
+    return train_dataset, val_dataset
 
-    # split each augmentation folder: part goes into training (with train-time
-    # transforms), the rest stays held out for the aug_loader monitoring metric
-    # (with clean eval transforms), so that metric isn't just measuring memorization.
+
+def build_augmentation_splits():
+    """Splits each augmentation folder per class: part goes into training (with
+    train-time transforms), the rest stays held out for the aug_loader monitoring
+    metric (with clean eval transforms), so that metric isn't just measuring memorization."""
     train_aug_parts = []
     held_aug_parts = []
 
@@ -105,6 +105,14 @@ def get_data_loaders():
 
         train_aug_parts.append(Subset(aug_train_view, take_idx))
         held_aug_parts.append(Subset(aug_val_view, rest_idx))
+
+    return train_aug_parts, held_aug_parts
+
+
+def get_data_loaders():
+    """Builds the train, validation, and combined augmentation pipelines."""
+    train_dataset, val_dataset = build_base_datasets()
+    train_aug_parts, held_aug_parts = build_augmentation_splits()
 
     train_dataset = ConcatDataset([train_dataset] + train_aug_parts)
     combined_aug_dataset = ConcatDataset(held_aug_parts)
@@ -176,21 +184,19 @@ def save_weights(model, output_path: Path):
     print(f"Saved trained weights to {output_path}")
 
 
-def main():
-    device = get_device()
-    print(f"Training on device: {device}")
-
-    print("LOADING DAta:")
-    train_loader, val_loader, aug_loader = get_data_loaders()
-
-    print("Initialize model:")
+def build_model_and_optimizer(device):
+    """Initializes the model, loss function, optimizer, and LR scheduler for training."""
     model = ModelArchitecture().to(device)
     criteria = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10,
                                                 gamma=0.5)
+    return model, criteria, optimizer, scheduler
 
-    print("Start training loop:")
+
+def run_training_loop(model, train_loader, val_loader, aug_loader, criteria,
+                      optimizer, scheduler, device):
+    """Runs all training epochs, printing clean and augmented accuracy after each one."""
     for epoch in range(1, EPOCHS + 1):
         # train
         train_one_epoch(model, train_loader, criteria, optimizer, device,
@@ -205,6 +211,21 @@ def main():
         print(
             f"-> Epoch {epoch} | Val Acc: {val_accur:.2f}% | Aug Acc: {aug_accur:.2f}%\n")
         scheduler.step()
+
+
+def main():
+    device = get_device()
+    print(f"Training on device: {device}")
+
+    print("LOADING DAta:")
+    train_loader, val_loader, aug_loader = get_data_loaders()
+
+    print("Initialize model:")
+    model, criteria, optimizer, scheduler = build_model_and_optimizer(device)
+
+    print("Start training loop:")
+    run_training_loop(model, train_loader, val_loader, aug_loader, criteria,
+                      optimizer, scheduler, device)
 
     save_weights(model, OUTPUT)
 
