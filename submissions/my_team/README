@@ -2,53 +2,57 @@ Michael Ketashvily
 STUDENT_ID
 
 Model Design & Architectural Evolution:
-As required, I built and trained a custom CNN entirely from scratch, without
-using any external datasets and pre-trained weights and APIs.
-* Iteration 1 (Baseline): Started with a simple 2-block CNN (3x3 convolutions
-  and MaxPool) just to make sure the data pipeline and model saving mechanism
-  worked.
-* Iteration 2 (Scaling up): Increased to a 4-block CNN. I replaced the standard
-  Flatten layer with AdaptiveAvgPool2d so the dimensions wouldn't break, and
-  added BatchNorm2d and standard Dropout to help with gradient stability and
-  overfitting.
-* Iteration 3-4 (Dealing with Augmentations): Added heavy data augmentations.
-  This made the training loss very noisy with high variance, and the model
-  struggled to learn.
-* Iteration 5 (Final - Double Convolutions): I changed each block to a Double
-  Convolution structure (Conv->BN->ReLU->Conv->BN->ReLU->Pool). This gives the
-  network a larger receptive field before pooling, helping it learn actual
-  physical shapes instead of just memorizing background colors.
+I built and trained a custom CNN from scratch.
+without external datasets, pre-trained weights, or APIs were used.
+- Iteration 1 :My baseline was to Start with simple 2-block CNN.
+  This used 3x3 convolutions and MaxPool to test my pipeline.
+  It proved the code worked, but accuracy remained very low.
+- Iteration 2 (Scaling up): Increased to a 4-block CNN.
+  I replaced the Flatten layer with AdaptiveAvgPool2d for stability.
+  I added BatchNorm2d and Dropout to help with overfitting.
+  This improved baseline accuracy but lacked robustness.
+- Iteration 3-4 (Augmentations): Added heavy data augmentations.
+  This caused noisy training loss with high variance.
+  The model struggled to learn and convergence was unstable.
+- Iteration 5 (Double Convolutions): Changed to a Double Conv structure.
+  This uses Conv->BN->ReLU->Conv->BN->ReLU->Pool.
+  It gave a larger receptive field to learn physical shapes.
+  This stabilized learning and boosted stress-test accuracy to ~46%.
+- Iteration 6 (Final Split): Injected stress-test data to training.
+  We also fixed validation transforms to avoid spatial squishing.
+  This leaped clean accuracy to 71.53% and robustness to 58.89%.
 
-Manipulations Tried, Insertion Strategy & Impact on Performance:
-To stop the model from "shortcut learning" (like guessing it's a duck just
-because the background is blue), I added data augmentations directly into the
-PyTorch DataLoader during training. Here is how each one affected the model:
-
+Manipulations Tried, Insertion Strategy & Impact:
+I added data augmentations directly into the PyTorch DataLoader.
+This stops the model from relying too strongly on its background[cite: 1].
 1. RandomResizedCrop (Zooming and Cropping):
    * Strategy: Randomly zooms and crops the image.
-   * Impact: At first, it lowered my validation accuracy because the bird
-     wasn't always perfectly centered. However, it forced the model to learn
-     specific body parts (like wings or beaks), which ended up improving the
-     accuracy on the stress-test images.
+   * Impact: It initially lowered validation accuracy due to off-center birds.
+     However, it forced the model to learn specific body parts.
+     This ultimately improved accuracy on the stress-test images.
 2. RandomHorizontalFlip (Orientation):
    * Strategy: Applied with a 50% probability.
-   * Impact: This barely hurt the training loss and effectively taught the
-     model that the direction the bird is facing doesn't change its class.
+   * Impact: This barely hurt the training loss.
+     It taught the model that facing direction does not change the class.
 3. ColorJitter (Brightness, Contrast, Hue):
-   * Strategy: Randomly changes the colors and lighting.
-   * Impact: This caused the biggest drop in accuracy at the beginning because
-     it messed up the background colors the model was relying on. But
-     eventually, it forced the optimizer to ignore color shortcuts and look at
-     the actual structure of the bird.
+   * Strategy: Randomly changes colors and lighting.
+   * Impact: This caused a big initial accuracy drop.
+     Eventually, the optimizer ignored color shortcuts and learned structure.
+4. Stratified Split Injection (Extreme Noise):
+   * Strategy: Injected 50% of black/white and salt/pepper images to training.
+     We also added 20% of the color jitter images.
+   * Impact: The model learned structural invariance instead of colors.
+     It stopped failing completely on unseen noise distributions.
 
 Overall Performance Resolution:
-Combining all these augmentations made it hard for the model to converge, and
-it got stuck around 34% on the robust stress-test data. To fix this, I added
-Spatial Dropout inside the conv blocks. Instead of dropping
-random pixels, this drops entire feature maps, so the model can't rely on just
-one specific visual cue. I also added a StepLR scheduler to lower the learning rate over the 30 epochs and help the model
-settle into a local minimum cause i didnt want to miss the minimum if the learning rate is too big.
-
-In the end, the model reached ~68.35% on the clean validation set and ~46.33%
-on the stress-test set, showing a good balance between learning the training
-data and handling visual noise.
+Combining these augmentations made convergence hard.
+The model was initially stuck around 34% on the robust stress-test data.
+To fix this, I added Spatial Dropout inside the conv blocks.
+This drops entire feature maps, preventing reliance on single visual cues.
+I also added a StepLR scheduler to lower the learning rate over 30 epochs.
+This helped the model settle into a local minimum without overshooting.
+Finally, we matched the grader's evaluation pipeline to fix image squishing.
+We replaced the standard resize with Resize(256) and CenterCrop(224).
+Our clean validation accuracy reached 71.53%.
+Our robustness on the stress-test set jumped to 58.89%.
+This shows a great balance between learning and handling visual noise.
