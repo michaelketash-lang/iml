@@ -56,3 +56,10 @@ We replaced the standard resize with Resize(256) and CenterCrop(224).
 Our clean validation accuracy reached 71.53%.
 Our robustness on the stress-test set jumped to 58.89%.
 This shows a great balance between learning and handling visual noise.
+
+Additional Experiment: Dropout Regularization:
+We suspected Dropout(p=0.5) might now be excessive given the injected
+augmented training data already acts as a regularizer. We retrained with
+p=0.3 for 30 epochs and got a near-identical result (71.42% val / 58.19%
+aug vs. 71.53% / 58.89% for p=0.5), with no overfitting in either run.
+We kept p=0.5 as our final choice since dropout was not the limiting factor.
