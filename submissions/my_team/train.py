@@ -19,9 +19,7 @@ OUTPUT = Path("weights.joblib")
 IMAGE_SIZE = 224
 BATCH_SIZE = 64
 EPOCHS = 30
-
 LR = 0.001
-
 IMAGENET_MEAN = (0.485,0.456,0.406)
 IMAGENET_STD = (0.229,0.224,0.225)
 
@@ -62,7 +60,7 @@ def get_val_transforms():
 
 
 def stratified_indices(dataset, take_frac, seed):
-    """Per-class shuffle+split (same idea as split_data.py), returns (take_idx, rest_idx)."""
+    """Per-class shuffle+split , returns (take_idx, rest_idx)."""
     rng = random.Random(seed)
     by_class = {}
     for i, (_, label) in enumerate(dataset.samples):
