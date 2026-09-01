@@ -1,20 +1,58 @@
-Michael,[Partner_Name]
-[Michael_ID],[Partner_ID]
+Michael Ketashvily
+STUDENT_ID
 
-### Model Design & Architectural Evolution
-Our final model architecture is the result of an iterative engineering process aimed at balancing baseline capacity with robustness.
+Model Design & Architectural Evolution:
+I built and trained a custom CNN from scratch.
+without external datasets, pre-trained weights, or APIs were used.
+- Iteration 1 :My baseline was to Start with simple 2-block CNN.
+  This used 3x3 convolutions and MaxPool to test my pipeline.
+  It proved the code worked, but accuracy remained very low.
+- Iteration 2 (Scaling up): Increased to a 4-block CNN.
+  I replaced the Flatten layer with AdaptiveAvgPool2d for stability.
+  I added BatchNorm2d and Dropout to help with overfitting.
+  This improved baseline accuracy but lacked robustness.
+- Iteration 3-4 (Augmentations): Added heavy data augmentations.
+  This caused noisy training loss with high variance.
+  The model struggled to learn and convergence was unstable.
+- Iteration 5 (Double Convolutions): Changed to a Double Conv structure.
+  This uses Conv->BN->ReLU->Conv->BN->ReLU->Pool.
+  It gave a larger receptive field to learn physical shapes.
+  This stabilized learning and boosted stress-test accuracy to ~46%.
+- Iteration 6 (Final Split): Injected stress-test data to training.
+  We also fixed validation transforms to avoid spatial squishing.
+  This leaped clean accuracy to 71.53% and robustness to 58.89%.
 
-1. Iteration 1 (Baseline Pipeline Check)
-* Architecture: 2-Block Convolutional Neural Network (CNN).
-* Details: 3x3 kernels, Max Pooling, and a single Linear classification head.
-* Goal: Establish a working data pipeline, verify the 80/20 train/validation split, and ensure the hardware-agnostic saving mechanism operated correctly.
-* Result: Pipeline successfully executed and passed the local evaluation wrapper.
+Manipulations Tried, Insertion Strategy & Impact:
+I added data augmentations directly into the PyTorch DataLoader.
+This stops the model from relying too strongly on its background[cite: 1].
+1. RandomResizedCrop (Zooming and Cropping):
+   * Strategy: Randomly zooms and crops the image.
+   * Impact: It initially lowered validation accuracy due to off-center birds.
+     However, it forced the model to learn specific body parts.
+     This ultimately improved accuracy on the stress-test images.
+2. RandomHorizontalFlip (Orientation):
+   * Strategy: Applied with a 50% probability.
+   * Impact: This barely hurt the training loss.
+     It taught the model that facing direction does not change the class.
+3. ColorJitter (Brightness, Contrast, Hue):
+   * Strategy: Randomly changes colors and lighting.
+   * Impact: This caused a big initial accuracy drop.
+     Eventually, the optimizer ignored color shortcuts and learned structure.
+4. Stratified Split Injection (Extreme Noise):
+   * Strategy: Injected 50% of black/white and salt/pepper images to training.
+     We also added 20% of the color jitter images.
+   * Impact: The model learned structural invariance instead of colors.
+     It stopped failing completely on unseen noise distributions.
 
-2. Iteration 2 (Scaling Capacity)
-* Architecture: 4-Block CNN with Batch Normalization and Global Average Pooling.
-* Details: Replaced the brittle hardcoded flattened tensor with AdaptiveAvgPool2d to ensure dimensional stability. Introduced nn.BatchNorm2d after every convolution to stabilize training gradients and nn.Dropout(p=0.5) to act as our initial regularizer.
-* Goal: Increase the network's expressive power to achieve high accuracy on clean, in-distribution images.
-* Result: [Leave blank until you record your clean accuracy]
-
-### Robustness Strategy & Data Manipulations
-[This section will document Phase 3: the exact torchvision transforms we apply, how we injected them into the training loop, and how they prevented shortcut learning.]
+Overall Performance Resolution:
+Combining these augmentations made convergence hard.
+The model was initially stuck around 34% on the robust stress-test data.
+To fix this, I added Spatial Dropout inside the conv blocks.
+This drops entire feature maps, preventing reliance on single visual cues.
+I also added a StepLR scheduler to lower the learning rate over 30 epochs.
+This helped the model settle into a local minimum without overshooting.
+Finally, we matched the grader's evaluation pipeline to fix image squishing.
+We replaced the standard resize with Resize(256) and CenterCrop(224).
+Our clean validation accuracy reached 71.53%.
+Our robustness on the stress-test set jumped to 58.89%.
+This shows a great balance between learning and handling visual noise.

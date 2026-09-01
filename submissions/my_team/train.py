@@ -1,24 +1,25 @@
 from pathlib import Path
-
+import random
+from torch.utils.data import DataLoader, Subset, ConcatDataset
 import joblib
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 
 from base_model import ImageNetSubset
 from model import ModelArchitecture
 
-
-# Anchors the path exactly 3 folders up from train.py (my_team -> submissions -> project -> dataset)
+##################################################################
+# Constants:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_ROOT = PROJECT_ROOT / "dataset"
 OUTPUT = Path("weights.joblib")
 
 IMAGE_SIZE = 224
 BATCH_SIZE = 64
-EPOCHS = 15
+EPOCHS = 30
+
 SEED = 42
 LR = 0.001
 TRAINING_FACTOR = 0.8
@@ -26,22 +27,96 @@ TRAINING_FACTOR = 0.8
 IMAGENET_MEAN = (0.485,0.456,0.406)
 IMAGENET_STD = (0.229,0.224,0.225)
 
-def get_data_loaders():
-    transform = transforms.Compose([
-        transforms.Resize((IMAGE_SIZE,IMAGE_SIZE)),transforms.ToTensor(),transforms.Normalize(mean = IMAGENET_MEAN,std= IMAGENET_STD),
+# Fraction of each augmentation folder mixed into training; the rest stays
+# held out for the aug_loader monitoring metric. black_white/salt_pepper get
+# a bigger share since get_train_transforms() has no analog for them, while
+# color_jitter already overlaps with the ColorJitter transform.
+AUG_TRAIN_FRACTIONS = {
+    "augmentations/black_white": 0.5,
+    "augmentations/salt_pepper": 0.5,
+    "augmentations/color_jitter": 0.2,
+}
+AUG_SPLIT_SEED = 42
+#################################################################
 
+
+def get_train_transforms():
+    """creating dynamic data augmentation pipeline that applies random visual changes
+    for example cropping ,flipping and color shifts for each image during training ."""
+    return transforms.Compose([
+        transforms.RandomResizedCrop(IMAGE_SIZE, scale=(0.6, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
-    full_dataset = ImageNetSubset(root = DATA_ROOT,split="train",transform= transform)
 
-    total_samples = len(full_dataset)
-    train_size = int(total_samples * TRAINING_FACTOR)
-    val_size = total_samples - train_size
 
-    generator = torch.Generator().manual_seed(SEED)
-    train_subset,val_subset = random_split(full_dataset,[train_size,val_size],generator=generator)
-    train_loader = DataLoader(train_subset,batch_size=BATCH_SIZE,shuffle=True)
-    val_loader = DataLoader(val_subset,batch_size=BATCH_SIZE,shuffle=False)
-    return train_loader,val_loader
+def get_val_transforms():
+    """create a pipeline that simply resize and normalize the images without
+     applying random augmentatinos."""
+    return transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(IMAGE_SIZE),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+    ])
+
+
+def stratified_indices(dataset, take_frac, seed):
+    """Per-class shuffle+split (same idea as split_data.py), returns (take_idx, rest_idx)."""
+    rng = random.Random(seed)
+    by_class = {}
+    for i, (_, label) in enumerate(dataset.samples):
+        by_class.setdefault(label, []).append(i)
+
+    take_idx, rest_idx = [], []
+    for label, idxs in by_class.items():
+        idxs = idxs[:]
+        rng.shuffle(idxs)
+        n_take = int(len(idxs) * take_frac)
+        take_idx.extend(idxs[:n_take])
+        rest_idx.extend(idxs[n_take:])
+
+    return take_idx, rest_idx
+
+
+def get_data_loaders():
+    """Builds the train, validation, and combined augmentation pipelines."""
+    # loading training and validation sets with the specific transforms
+    train_dataset = ImageNetSubset(root=DATA_ROOT, split="train",
+                                   transform=get_train_transforms())
+    val_dataset = ImageNetSubset(root=DATA_ROOT, split="validation",
+                                 transform=get_val_transforms())
+
+    # split each augmentation folder: part goes into training (with train-time
+    # transforms), the rest stays held out for the aug_loader monitoring metric
+    # (with clean eval transforms), so that metric isn't just measuring memorization.
+    train_aug_parts = []
+    held_aug_parts = []
+
+    for aug_split, train_frac in AUG_TRAIN_FRACTIONS.items():
+        aug_train_view = ImageNetSubset(root=DATA_ROOT, split=aug_split,
+                                        transform=get_train_transforms())
+        aug_val_view = ImageNetSubset(root=DATA_ROOT, split=aug_split,
+                                      transform=get_val_transforms())
+
+        take_idx, rest_idx = stratified_indices(aug_train_view, train_frac, AUG_SPLIT_SEED)
+
+        train_aug_parts.append(Subset(aug_train_view, take_idx))
+        held_aug_parts.append(Subset(aug_val_view, rest_idx))
+
+    train_dataset = ConcatDataset([train_dataset] + train_aug_parts)
+    combined_aug_dataset = ConcatDataset(held_aug_parts)
+
+    # wrapping datasets in dataloaders to handle batching ,shuffling only train data.
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
+                              shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    aug_loader = DataLoader(combined_aug_dataset, batch_size=BATCH_SIZE,
+                            shuffle=False)
+
+    return train_loader, val_loader, aug_loader
 
 
 def get_device():
@@ -77,14 +152,14 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
 
 
 def evaluate_model(model, val_loader, device) -> float:
-    """Runs the model on the validation set and returns the accuracy percentage."""
+    """Runs the model on  validation set and returns the acc percentage.
+       Comparing the model's predictions to true labels"""
     model.eval()
-    correct = 0
-    total = 0
-
+    correct, total = 0, 0
     with torch.no_grad():
         for inputs, labels in val_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs = inputs.to(device)
+            labels = labels.to(device)
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
@@ -95,40 +170,43 @@ def evaluate_model(model, val_loader, device) -> float:
 
 def save_weights(model, output_path: Path):
     """Safely moves the model to CPU and saves the state_dict."""
-    print("Saving model weights...")
+    print("Saving model weights:")
     model = model.cpu()
     joblib.dump(model.state_dict(), output_path)
     print(f"Saved trained weights to {output_path}")
 
 
 def main():
-    """
-    Full training pipeline.
-
-    This script must create weights.joblib.
-    """
     device = get_device()
-    print(f"Training in device: {device}")
+    print(f"Training on device: {device}")
 
-    print("LOADS THE DATA...")
-    train_loader,val_loader=get_data_loaders()
+    print("LOADING DAta:")
+    train_loader, val_loader, aug_loader = get_data_loaders()
 
-    print("initialize the best model in the world")
+    print("Initialize model:")
     model = ModelArchitecture().to(device)
     criteria = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(),lr=LR)
+    optimizer = optim.Adam(model.parameters(), lr=LR)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10,
+                                                gamma=0.5)
 
-    print("Strat train loop.......")
-    for epoch in range(1,EPOCHS+ 1):
-        train_one_epoch(model,train_loader,criteria,optimizer,device,epoch)
-        val_accur = evaluate_model(model,val_loader,device)
-        print(f"-> Epoch {epoch} Validation Accuracy: {val_accur:.2f}%\n")
-    save_weights(model,OUTPUT)
-    # TODO: load dataset (you might want to use ImageNetSubset)
-    # TODO: create your model
+    print("Start training loop:")
+    for epoch in range(1, EPOCHS + 1):
+        # train
+        train_one_epoch(model, train_loader, criteria, optimizer, device,
+                        epoch)
 
-    # TODO: save trained model weights to weights.joblib
+        # check on existing data
+        val_accur = evaluate_model(model, val_loader, device)
 
+        # check on augmentation
+        aug_accur = evaluate_model(model, aug_loader, device)
+
+        print(
+            f"-> Epoch {epoch} | Val Acc: {val_accur:.2f}% | Aug Acc: {aug_accur:.2f}%\n")
+        scheduler.step()
+
+    save_weights(model, OUTPUT)
 
 
 if __name__ == "__main__":
