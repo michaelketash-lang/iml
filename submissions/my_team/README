@@ -7,42 +7,48 @@ without external datasets, pre-trained weights, or APIs were used.
 - Iteration 1 :My baseline was to Start with simple 2-block CNN.
   This used 3x3 convolutions and MaxPool to test my pipeline.
   It proved the code worked, but accuracy remained very low.
-- Iteration 2 (Scaling up): Increased to a 4-block CNN.
-  I replaced the Flatten layer with AdaptiveAvgPool2d for stability.
+- Iteration 2 try to scale up: Increased to a 4-block CNN.
+  I replaced the flatten layer with AdaptiveAvgPool2d for stability.
   I added BatchNorm2d and Dropout to help with overfitting.
   This improved baseline accuracy but lacked robustness.
-- Iteration 3-4 (Augmentations): Added heavy data augmentations.
+- Iteration 3-4 augmentations: Added data augmentations.
   This caused noisy training loss with high variance.
   The model struggled to learn and convergence was unstable.
-- Iteration 5 (Double Convolutions): Changed to a Double Conv structure.
+- Iteration 5 Double Convolutions: Changed to a Double Conv structure.
   This uses Conv->BN->ReLU->Conv->BN->ReLU->Pool.
   It gave a larger receptive field to learn physical shapes.
   This stabilized learning and boosted stress-test accuracy to ~46%.
 - Iteration 6 (Final Split): Injected stress-test data to training.
-  We also fixed validation transforms to avoid spatial squishing.
+  I also fixed validation transforms to avoid spatial squishing.
   This leaped clean accuracy to 71.53% and robustness to 58.89%.
+- Iteration 7 (No-Leak Split): Found that some injected images' clean
+  photo was already used in training, inflating my robustness score.
+  Fixed the split so held-out testing only uses truly unseen photos.
+  Honest result: 67.62% clean accuracy and 46.22% robustness.
 
 Manipulations Tried, Insertion Strategy & Impact:
 I added data augmentations directly into the PyTorch DataLoader.
 This stops the model from relying too strongly on its background[cite: 1].
-1. RandomResizedCrop (Zooming and Cropping):
-   * Strategy: Randomly zooms and crops the image.
-   * Impact: It initially lowered validation accuracy due to off-center birds.
-     However, it forced the model to learn specific body parts.
-     This ultimately improved accuracy on the stress-test images.
-2. RandomHorizontalFlip (Orientation):
-   * Strategy: Applied with a 50% probability.
-   * Impact: This barely hurt the training loss.
-     It taught the model that facing direction does not change the class.
-3. ColorJitter (Brightness, Contrast, Hue):
-   * Strategy: Randomly changes colors and lighting.
-   * Impact: This caused a big initial accuracy drop.
-     Eventually, the optimizer ignored color shortcuts and learned structure.
-4. Stratified Split Injection (Extreme Noise):
-   * Strategy: Injected 50% of black/white and salt/pepper images to training.
-     We also added 20% of the color jitter images.
-   * Impact: The model learned structural invariance instead of colors.
-     It stopped failing completely on unseen noise distributions.
+-RandomResizedCrop (Zooming and Cropping):
+  Strategy: Randomly zooms and crops the image.
+  Impact: It initially lowered validation accuracy due to off-center birds.
+  However, it forced the model to learn specific body parts.
+  This ultimately improved accuracy on the stress-test images.
+-RandomHorizontalFlip (Orientation):
+  Strategy: Applied with a 50% probability.
+  Impact: This barely hurt the training loss.
+  It taught the model that facing direction does not change the class.
+-ColorJitter (Brightness, Contrast, Hue):
+  Strategy: Randomly changes colors and lighting.
+  Impact: This caused a big initial accuracy drop.
+  Eventually, the optimizer ignored color shortcuts and learned structure.
+-Stratified Split Injection (Extreme Noise):
+  Strategy: Injected 50% of black/white and salt/pepper images to training.
+  I also added 20% of the color jitter images, but only from photos
+  already seen in the clean training set, so unseen photos stay held out.
+  Impact: The model learned structural invariance instead of colors.
+  My robustness score dropped once I fixed this leak, but it is now
+  an honest measure of generalization to unseen images.
 
 Overall Performance Resolution:
 Combining these augmentations made convergence hard.
@@ -51,15 +57,17 @@ To fix this, I added Spatial Dropout inside the conv blocks.
 This drops entire feature maps, preventing reliance on single visual cues.
 I also added a StepLR scheduler to lower the learning rate over 30 epochs.
 This helped the model settle into a local minimum without overshooting.
-Finally, we matched the grader's evaluation pipeline to fix image squishing.
-We replaced the standard resize with Resize(256) and CenterCrop(224).
-Our clean validation accuracy reached 71.53%.
-Our robustness on the stress-test set jumped to 58.89%.
-This shows a great balance between learning and handling visual noise.
+Finally, I matched the grader's evaluation pipeline to fix image squishing.
+I replaced the standard resize with Resize(256) and CenterCrop(224).
+My clean validation accuracy reached 67.62%.
+My robustness on the stress-test set reached 46.22%, measured only on
+augmented images whose original photo was never used in training.
+This shows a real, leak-free balance between learning and handling visual noise.
 
-Additional Experiment: Dropout Regularization:
-We suspected Dropout(p=0.5) might now be excessive given the injected
-augmented training data already acts as a regularizer. We retrained with
+Additional Experiment: Dropout Regularization (ran before the no-leak fix,
+so these numbers use the older, leakier split):
+I thought Dropout(p=0.5) might now be excessive given the injected
+augmented training data already acts as a regularizer. I retrained with
 p=0.3 for 30 epochs and got a near-identical result (71.42% val / 58.19%
 aug vs. 71.53% / 58.89% for p=0.5), with no overfitting in either run.
-We kept p=0.5 as our final choice since dropout was not the limiting factor.
+I kept p=0.5 as my final choice since dropout was not the limiting factor.
